@@ -409,6 +409,25 @@ def add_message_title(
         ax.figure.supxlabel(source, x=0.01, ha="left", fontsize=8, color=COLORS["neutral"])
 
 
+def _in_live_ipython() -> bool:
+    """True only inside a running IPython/Jupyter kernel.
+
+    `IPython.display.display` / `publish_display_data` call
+    `InteractiveShell.instance()` when no shell exists yet. That constructor
+    replaces ``sys.modules["__main__"]`` with a fresh interactive namespace.
+    Functions defined earlier in a ``python script.py`` run keep their original
+    globals and ``__module__ == "__main__"``, but are no longer attributes of
+    the module pickle looks up - so ``ProcessPoolExecutor.map`` fails with
+    ``PicklingError: ... not found as __main__.<fn>``. Notebook kernels already
+    have a live shell, so the display path is unchanged there.
+    """
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        return False
+    return get_ipython() is not None
+
+
 def show_with_alt(fig: object, alt: str) -> None:
     """Render *fig* carrying alt text for screen readers, then close it.
 
@@ -416,6 +435,10 @@ def show_with_alt(fig: object, alt: str) -> None:
     about and a screen reader cannot describe. The alt text is a sentence saying
     what the chart shows, not a repeat of the title.
     """
+    if not _in_live_ipython():
+        plt.close(fig)
+        return
+
     from IPython.display import display
 
     display(fig, metadata={"image/png": {"alt": alt}})
@@ -440,12 +463,19 @@ def show_plotly_with_alt(fig: object, alt: str) -> None:
     that rendered correctly. It reports how the browser exited, not anything about the
     figure, so the logger is quieted here rather than in each of the notebooks that call
     this. Errors from the same logger still come through.
+
+    Outside a live kernel this is a no-op: publishing would install an InteractiveShell
+    on ``__main__`` and break process-pool pickling of script-local callables (see
+    `_in_live_ipython`).
     """
     import logging
 
-    from IPython.display import publish_display_data
-
     logging.getLogger("choreographer").setLevel(logging.ERROR)
+
+    if not _in_live_ipython():
+        return
+
+    from IPython.display import publish_display_data
 
     bundle = fig._repr_mimebundle_()
     data, metadata = bundle if isinstance(bundle, tuple) else (bundle, {})
